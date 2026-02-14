@@ -69,6 +69,9 @@ OUTPUT_DIR = Path("outputs")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
+# =========================
+# Utility
+# =========================
 def count_chars(text: str) -> int:
     return len(text)
 
@@ -78,6 +81,18 @@ def safe_filename(text: str, max_len: int = 40) -> str:
     text = re.sub(r"[^a-z0-9_-]+", "_", text)
     text = text.strip("_")
     return (text[:max_len] or "topic")
+
+
+def score_to_rank(score: int) -> str:
+    if score >= 90:
+        return "S"
+    if score >= 80:
+        return "A"
+    if score >= 70:
+        return "B"
+    if score >= 60:
+        return "C"
+    return "D"
 
 
 def validate_input(topic: str, explanation: str) -> tuple[bool, str]:
@@ -125,12 +140,17 @@ def save_record(topic: str, explanation: str, result: dict) -> Path:
     name = safe_filename(topic)
     path = OUTPUT_DIR / f"{ts}_{name}.json"
 
+    score = result.get("score")
+    rank = score_to_rank(score) if isinstance(score, int) else None
+
     payload = {
         "app": APP_NAME,
         "created_at": datetime.now().isoformat(),
         "topic": topic,
         "explanation": explanation,
         "char_count": count_chars(explanation),
+        "score": score,
+        "rank": rank,
         "result": result,
     }
 
@@ -140,13 +160,20 @@ def save_record(topic: str, explanation: str, result: dict) -> Path:
     return path
 
 
-def load_history(limit: int = 30) -> list[dict]:
+def load_history(limit: int = 50) -> list[dict]:
     files = sorted(OUTPUT_DIR.glob("*.json"), reverse=True)[:limit]
     records = []
     for p in files:
         try:
             with p.open("r", encoding="utf-8") as f:
                 data = json.load(f)
+
+            # 旧データ互換
+            if "score" not in data:
+                data["score"] = data.get("result", {}).get("score")
+            if "rank" not in data and isinstance(data.get("score"), int):
+                data["rank"] = score_to_rank(data["score"])
+
             data["_file"] = str(p)
             records.append(data)
         except Exception:
@@ -156,7 +183,15 @@ def load_history(limit: int = 30) -> list[dict]:
 
 def render_diagnosis_result(result: dict):
     st.subheader("診断結果")
-    st.metric("スコア", f"{result.get('score', 'N/A')} / 100")
+
+    score = result.get("score", None)
+    if isinstance(score, int):
+        rank = score_to_rank(score)
+        c1, c2 = st.columns(2)
+        c1.metric("スコア", f"{score} / 100")
+        c2.metric("ランク", rank)
+    else:
+        st.metric("スコア", "N/A")
 
     strengths = result.get("strengths", [])
     if strengths:
@@ -233,10 +268,11 @@ else:
         for i, rec in enumerate(records, start=1):
             topic = rec.get("topic", "(no topic)")
             created = rec.get("created_at", "")
-            score = rec.get("result", {}).get("score", "N/A")
+            score = rec.get("score", rec.get("result", {}).get("score", "N/A"))
+            rank = rec.get("rank", score_to_rank(score) if isinstance(score, int) else "-")
             char_count = rec.get("char_count", 0)
 
-            with st.expander(f"{i}. {topic} | score: {score} | {created}"):
+            with st.expander(f"{i}. {topic} | rank: {rank} | score: {score} | {created}"):
                 st.write(f"文字数: {char_count}")
                 st.write(f"ファイル: {rec.get('_file', '')}")
 

@@ -118,6 +118,19 @@ def input_multiline(prompt: str) -> str:
 
 def validate_input(topic: str, explanation: str) -> tuple[bool, str]:
     if not topic:
+        return False, "トピック名は必須です。例: TypeScriptのUnion型"
+
+    char_count = count_chars(explanation)
+    if char_count < MIN_CHARS:
+        remain = MIN_CHARS - char_count
+        return (
+            False,
+            f"説明文は{MIN_CHARS}文字以上必要です（現在{char_count}文字、あと{remain}文字）。\n"
+            "ヒント: 『〜とは』『なぜ使うか』『具体例』の3点を書くと到達しやすいです。"
+        )
+
+    return True, ""
+    if not topic:
         return False, "トピック名は必須です。"
     char_count = count_chars(explanation)
     if char_count < MIN_CHARS:

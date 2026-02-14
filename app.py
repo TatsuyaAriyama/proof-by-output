@@ -128,3 +128,107 @@ def validate_input(topic: str, explanation: str) -> tuple[bool, str]:
 
 def evaluate(topic: str, explanation: str) -> dict:
     user_prompt = f"""
+    [トピック]
+{topic}
+
+[説明文]
+{explanation}
+"""
+    res = client.chat.completions.create(
+        model="gpt-5-mini",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.3,
+    )
+
+    content = res.choices[0].message.content
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"AI応答がJSON形式ではありません: {e}\n---\n{content}")
+
+    return data
+
+
+def print_result(result: dict) -> None:
+    print("\n==============================")
+    print(f"{APP_NAME} - 診断結果")
+    print("==============================")
+    print(f"スコア: {result.get('score', 'N/A')} / 100")
+
+    strengths = result.get("strengths", [])
+    if strengths:
+        print("\n良い点:")
+        for s in strengths:
+            print(f"- {s}")
+
+    tags = result.get("tags", [])
+    if tags:
+        print("\n検知タグ:")
+        for t in tags:
+            name = t.get("name", "")
+            desc = t.get("description", "")
+            advice = t.get("advice", "")
+            print(f"- {name}：{desc}")
+            if advice:
+                print(f"  改善: {advice}")
+
+    tips = result.get("improve_tips", [])
+    if tips:
+        print("\n改善提案:")
+        for tip in tips:
+            print(f"- {tip}")
+
+    print("\n改善版説明:")
+    print(result.get("improved_explanation", ""))
+
+    print("\n30秒説明:")
+    print(result.get("explanation_30sec", ""))
+
+
+def save_record(topic: str, explanation: str, result: dict) -> Path:
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    name = safe_filename(topic)
+    path = OUTPUT_DIR / f"{ts}_{name}.json"
+
+    payload = {
+        "app": APP_NAME,
+        "created_at": datetime.now().isoformat(),
+        "topic": topic,
+        "explanation": explanation,
+        "char_count": count_chars(explanation),
+        "result": result,
+    }
+
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    return path
+
+
+def main() -> None:
+    print(f"=== {APP_NAME} ===")
+    print("理解は、アウトプットで証明する。")
+    print(f"説明文は{MIN_CHARS}文字以上で入力してください。\n")
+
+    topic = input("トピック名: ").strip()
+    explanation = input_multiline("\n説明文を入力してください。")
+
+    ok, msg = validate_input(topic, explanation)
+    if not ok:
+        print(f"\n入力エラー: {msg}")
+        return
+
+    try:
+        result = evaluate(topic, explanation)
+        print_result(result)
+        save_path = save_record(topic, explanation, result)
+        print(f"\n保存先: {save_path}")
+    except Exception as e:
+        print(f"\n実行エラー: {e}")
+
+
+if __name__ == "__main__":
+    main()

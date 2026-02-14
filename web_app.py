@@ -37,7 +37,7 @@ SYSTEM_PROMPT = f"""
 - 必ずJSONのみ（前置き・補足文は禁止）
 - tags は上記6タグから最大3つ選ぶ
 - score は 0〜100 の整数
-- improve_tips は短く具体的に3件以内
+- improve_tips は少なくとも1件、最大3件
 - improved_explanation は200〜320文字
 - explanation_30sec は80〜140文字
 
@@ -140,66 +140,108 @@ def save_record(topic: str, explanation: str, result: dict) -> Path:
     return path
 
 
+def load_history(limit: int = 30) -> list[dict]:
+    files = sorted(OUTPUT_DIR.glob("*.json"), reverse=True)[:limit]
+    records = []
+    for p in files:
+        try:
+            with p.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            data["_file"] = str(p)
+            records.append(data)
+        except Exception:
+            continue
+    return records
+
+
+def render_diagnosis_result(result: dict):
+    st.subheader("診断結果")
+    st.metric("スコア", f"{result.get('score', 'N/A')} / 100")
+
+    strengths = result.get("strengths", [])
+    if strengths:
+        st.markdown("### 良い点")
+        for s in strengths:
+            st.markdown(f"- {s}")
+
+    tags = result.get("tags", [])
+    if tags:
+        st.markdown("### 検知タグ")
+        for t in tags:
+            st.markdown(f"- **{t.get('name','')}**：{t.get('description','')}")
+            if t.get("advice"):
+                st.markdown(f"  - 改善: {t.get('advice')}")
+
+    tips = result.get("improve_tips", [])
+    if tips:
+        st.markdown("### 改善提案")
+        for tip in tips:
+            st.markdown(f"- {tip}")
+
+    st.markdown("### 改善版説明")
+    st.write(result.get("improved_explanation", ""))
+
+    st.markdown("### 30秒説明")
+    st.write(result.get("explanation_30sec", ""))
+
+
 # =========================
 # UI
 # =========================
 st.set_page_config(page_title=APP_NAME, page_icon="🧠", layout="centered")
-
 st.title(APP_NAME)
 st.caption("理解は、アウトプットで証明する。")
 
-topic = st.text_input("トピック名", placeholder="例: TypeScriptのUnion型")
-explanation = st.text_area(
-    "説明文（60文字以上）",
-    placeholder="ここに自分の説明を書いてください。",
-    height=220,
-)
+mode = st.sidebar.radio("メニュー", ["診断", "履歴"], index=0)
 
-chars = count_chars(explanation)
-st.write(f"文字数: **{chars}** / 最低 **{MIN_CHARS}**")
+if mode == "診断":
+    topic = st.text_input("トピック名", placeholder="例: TypeScriptのUnion型")
+    explanation = st.text_area(
+        "説明文（60文字以上）",
+        placeholder="ここに自分の説明を書いてください。",
+        height=220,
+    )
 
-if st.button("診断する", type="primary"):
-    ok, msg = validate_input(topic, explanation)
-    if not ok:
-        st.warning(msg)
+    chars = count_chars(explanation)
+    st.write(f"文字数: **{chars}** / 最低 **{MIN_CHARS}**")
+
+    if st.button("診断する", type="primary"):
+        ok, msg = validate_input(topic, explanation)
+        if not ok:
+            st.warning(msg)
+        else:
+            try:
+                with st.spinner("診断中..."):
+                    result = evaluate(topic, explanation)
+
+                render_diagnosis_result(result)
+                save_path = save_record(topic, explanation, result)
+                st.success(f"結果を保存しました: {save_path}")
+
+            except json.JSONDecodeError:
+                st.error("AI応答の解析に失敗しました。もう一度実行してください。")
+            except Exception as e:
+                st.error(f"エラーが発生しました: {e}")
+
+else:
+    st.subheader("診断履歴")
+    records = load_history(limit=50)
+
+    if not records:
+        st.info("まだ履歴がありません。診断を実行するとここに表示されます。")
     else:
-        try:
-            with st.spinner("診断中..."):
-                result = evaluate(topic, explanation)
+        for i, rec in enumerate(records, start=1):
+            topic = rec.get("topic", "(no topic)")
+            created = rec.get("created_at", "")
+            score = rec.get("result", {}).get("score", "N/A")
+            char_count = rec.get("char_count", 0)
 
-            st.subheader("診断結果")
-            st.metric("スコア", f"{result.get('score', 'N/A')} / 100")
+            with st.expander(f"{i}. {topic} | score: {score} | {created}"):
+                st.write(f"文字数: {char_count}")
+                st.write(f"ファイル: {rec.get('_file', '')}")
 
-            strengths = result.get("strengths", [])
-            if strengths:
-                st.markdown("### 良い点")
-                for s in strengths:
-                    st.markdown(f"- {s}")
+                st.markdown("**入力説明文**")
+                st.write(rec.get("explanation", ""))
 
-            tags = result.get("tags", [])
-            if tags:
-                st.markdown("### 検知タグ")
-                for t in tags:
-                    st.markdown(f"- **{t.get('name','')}**：{t.get('description','')}")
-                    if t.get("advice"):
-                        st.markdown(f"  - 改善: {t.get('advice')}")
-
-            tips = result.get("improve_tips", [])
-            if tips:
-                st.markdown("### 改善提案")
-                for tip in tips:
-                    st.markdown(f"- {tip}")
-
-            st.markdown("### 改善版説明")
-            st.write(result.get("improved_explanation", ""))
-
-            st.markdown("### 30秒説明")
-            st.write(result.get("explanation_30sec", ""))
-
-            save_path = save_record(topic, explanation, result)
-            st.success(f"結果を保存しました: {save_path}")
-
-        except json.JSONDecodeError:
-            st.error("AI応答の解析に失敗しました。もう一度実行してください。")
-        except Exception as e:
-            st.error(f"エラーが発生しました: {e}")
+                st.markdown("**診断結果**")
+                render_diagnosis_result(rec.get("result", {}))
